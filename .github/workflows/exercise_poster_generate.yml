@@ -1,0 +1,73 @@
+name: Sync Apple Health
+
+# The iOS Shortcut dispatches this workflow by its file name with two text inputs, the same
+# contract as GitHubPoster's exercise_poster_generate.yml, so only the repository name in
+# the Shortcut's URL has to change.
+on:
+  workflow_dispatch:
+    inputs:
+      time:
+        description: "样本日期，多个用换行或逗号分隔（快捷指令传入）"
+        required: false
+      value:
+        description: "样本数值（kcal），顺序和 time 一一对应"
+        required: false
+
+permissions:
+  contents: write
+
+# Shortcut runs can land minutes apart; queue them so their pushes never race
+concurrency:
+  group: sync
+  cancel-in-progress: false
+
+env:
+  PROFILE_REPO: whrss9527/whrss9527
+  PROFILE_FILE: AppleHealthData.svg
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    env:
+      # a token that can push to the profile repository; without it the heatmap only updates here
+      PROFILE_TOKEN: ${{ secrets.WHRSS9527_ACCESS_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Merge samples and draw
+        env:
+          HEALTH_TIME: ${{ inputs.time }}
+          HEALTH_VALUE: ${{ inputs.value }}
+        run: python3 -m heatmap sync
+
+      - name: Commit data
+        run: |
+          git add data heatmap.svg
+          git diff --cached --quiet && exit 0
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Sync Apple Health"
+          git pull --rebase
+          git push
+
+      - name: Check out profile
+        if: env.PROFILE_TOKEN != ''
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ env.PROFILE_REPO }}
+          token: ${{ env.PROFILE_TOKEN }}
+          path: profile
+
+      - name: Publish to profile
+        if: env.PROFILE_TOKEN != ''
+        working-directory: profile
+        run: |
+          cp ../heatmap.svg "$PROFILE_FILE"
+          git add "$PROFILE_FILE"
+          git diff --cached --quiet && exit 0
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Update activity heatmap"
+          # the profile's own workflows push to the same branch
+          git pull --rebase
+          git push
